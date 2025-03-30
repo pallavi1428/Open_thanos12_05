@@ -1,7 +1,7 @@
 # **OpenThanos: AI-Powered Browser Automation**  
 
 ## **1. Introduction**  
-OpenThanos is a browser automation tool that allows users to automate web tasks using natural language commands. It simplifies navigation, data extraction, and interactions with websites. The tool is designed for developers, researchers, and professionals looking for an efficient way to automate repetitive tasks.  
+OpenThanos is an AI-powered browser automation tool that converts plain English instructions into Playwright commands using OpenAI. It automates web tasks while simulating human-like behavior—including natural typing delays and occasional "mistakes"—to make interactions appear more organic and bypass bot detection. The tool provides step-by-step visual feedback through screenshots and works seamlessly in Docker for easy deployment.  
 
 ## **2. Features**  
 - **Natural Language Automation**: Execute browser tasks by providing simple text instructions.  
