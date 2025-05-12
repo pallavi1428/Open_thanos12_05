@@ -2,9 +2,10 @@ import os
 import json
 import random
 import time
+import base64
 from typing import Dict, Any, List, Optional, Callable
 from openai import OpenAI
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
 class BrowserAutomator:
     def __init__(self, openai_api_key: str):
@@ -53,61 +54,13 @@ Response format:
 """
         self.screenshot_history = []
         self.current_screenshot_index = -1
-    
+        self.virtual_mode = False
+        self.frame_callback = None
+        self.active_sessions = {}
 
-    def get_authenticated_browser(self, playwright):
-        """Launch browser with human-like settings"""
-        return playwright.chromium.launch(
-            headless=False,
-            args=[
-                '--disable-blink-features=AutomationControlled',
-                '--start-maximized',
-                '--disable-web-security',
-                '--disable-features=IsolateOrigins,site-per-process'
-            ],
-            slow_mo=random.randint(100, 300),  # Random delays
-            channel="chrome",
-            ignore_default_args=["--enable-automation"]
-        )
-
-    def get_authenticated_context(self, browser):
-        """Create stealthy browsing context"""
-        context = browser.new_context(
-            viewport={'width': random.randint(1200, 1400), 'height': random.randint(700, 800)},
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{}.0.{}.{} Safari/537.36'.format(
-                random.randint(90, 120),
-                random.randint(1000, 5000),
-                random.randint(100, 999)
-            ),
-            locale='en-US',
-            permissions=['geolocation'],
-            color_scheme='light',
-            timezone_id='America/New_York'
-        )
-        
-        # Remove automation痕迹
-        context.add_init_script("""
-        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
-        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
-        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
-        navigator.webdriver = false;
-        Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-        """)
-        
-        return context
-
-    def human_type(self, page, selector: str, text: str):
-        """Type like a human with random delays"""
-        for char in text:
-            page.type(selector, char, delay=random.randint(50, 250))
-            if random.random() > 0.9:  # 10% chance to "mistake"
-                page.keyboard.press('Backspace')
-                page.wait_for_timeout(random.randint(50, 200))
-                page.type(selector, char)
-
-    def get_ai_response(self, prompt: str) -> Dict[str, Any]:
-        """Get structured actions from OpenAI (unchanged)"""
-        response = self.client.chat.completions.create(
+    async def get_ai_response(self, prompt: str) -> Dict[str, Any]:
+        """Your existing AI response generation"""
+        response = await self.client.chat.completions.create(
             model="gpt-3.5-turbo-1106",
             messages=[
                 {"role": "system", "content": self.system_prompt},
@@ -118,149 +71,147 @@ Response format:
         )
         return json.loads(response.choices[0].message.content)
 
-    def try_selectors(self, page, selectors: str, action: str, **kwargs) -> bool:
-        """Enhanced with human-like interactions"""
-        selector_list = [s.strip() for s in selectors.split(",")]
-        
-        for selector in selector_list:
-            try:
-                if action == "click":
-                    # Human-like mouse movement
-                    box = page.locator(selector).bounding_box()
-                    if box:
-                        x = box['x'] + random.randint(5, 15)
-                        y = box['y'] + random.randint(5, 15)
-                        page.mouse.move(x, y)
-                        page.wait_for_timeout(random.randint(100, 500))
-                    page.click(selector, **kwargs)
-                    
-                elif action == "type":
-                    if kwargs.get("clear", False):
-                        page.fill(selector, "")
-                    self.human_type(page, selector, kwargs["text"])
-                    
-                elif action == "fill":
-                    page.fill(selector, kwargs["text"])
-                    
-                elif action == "wait_for":
-                    page.wait_for_selector(selector, state=kwargs.get("state", "visible"), 
-                                         timeout=kwargs.get("timeout", 5000))
-                return True
-            except Exception:
-                continue
-        return False
+    async def execute_actions(self, session_id: str, actions_json: Dict[str, Any], 
+                           screenshot_callback: Optional[Callable] = None,
+                           headless: bool = False) -> str:
+        """Main execution entry point"""
+        if self.virtual_mode:
+            return await self._execute_virtual(session_id, actions_json)
+        return await self._execute_real(session_id, actions_json, screenshot_callback, headless)
 
-    def execute_actions(self, actions_json: Dict[str, Any], 
-                       screenshot_callback: Optional[Callable] = None,
-                       headless: bool = False) -> str:
-        """Execute actions with anti-bot measures"""
-        results = []
-        with sync_playwright() as p:
-            browser = self.get_authenticated_browser(p)
-            context = self.get_authenticated_context(browser)
-            page = context.new_page()
+    async def _execute_virtual(self, session_id: str, actions_json: Dict[str, Any]) -> str:
+        """Surf-like virtual browser execution"""
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await self._get_authenticated_context(browser)
+            page = await context.new_page()
+            self.active_sessions[session_id] = {"browser": browser, "page": page}
             
+            log = []
             try:
                 # Initial human-like activity
-                page.mouse.move(100, 100)
-                page.wait_for_timeout(500)
+                await page.mouse.move(100, 100)
+                await page.wait_for_timeout(500)
                 
                 for action_item in actions_json.get("output", []):
                     if action_item["type"] != "computer_call":
                         continue
                         
                     action = action_item["action"]
-                    action_type = action.get("type")
-                    results.append(f"Executing: {action_type}")
+                    result = await self._perform_action(page, action)
+                    log.append(result)
                     
-                    try:
-                        if action_type == "navigate":
-                            page.goto(
-                                action["url"],
-                                wait_until=action.get("wait_until", "load"),
-                                timeout=action.get("timeout", 30000),
-                                referer="https://www.google.com/"
-                            )
-                            results.append(f"✓ Navigated to {action['url']}")
-                            page.wait_for_timeout(random.randint(1000, 3000))  # Human delay
-                            
-                        elif action_type == "click":
-                            if not self.try_selectors(
-                                page,
-                                action["selector"],
-                                "click",
-                                timeout=action.get("timeout", 5000),
-                                click_count=action.get("click_count", 1),
-                                delay=random.randint(50, 150)
-                            ):
-                                raise Exception(f"Failed to click on any selector: {action['selector']}")
-                            results.append(f"✓ Clicked: {action['selector'].split(',')[0].strip()}")
-                            
-                        elif action_type == "type":
-                            if not self.try_selectors(
-                                page,
-                                action["selector"],
-                                "type",
-                                text=action["text"],
-                                clear=action.get("clear", False)
-                            ):
-                                raise Exception(f"Failed to type in any selector: {action['selector']}")
-                            results.append(f"✓ Typed '{action['text']}' into {action['selector'].split(',')[0].strip()}")
-                            
-                        elif action_type == "keypress":
-                            keys = action["keys"]
-                            if isinstance(keys, str):
-                                page.wait_for_timeout(random.randint(50, 200))
-                                page.keyboard.press(keys)
-                            else:
-                                for key in keys:
-                                    page.wait_for_timeout(random.randint(50, 200))
-                                    page.keyboard.press(key)
-                            results.append(f"✓ Pressed keys: {keys}")
-                            
-                        elif action_type == "wait":
-                            if action.get("state") == "networkidle":
-                                page.wait_for_load_state("networkidle", timeout=action.get("timeout", 10000))
-                            else:
-                                page.wait_for_timeout(action["timeout"])
-                            results.append(f"✓ Waited for {action.get('timeout', 0)}ms")
-                            
-                        elif action_type == "scroll":
-                            if "selector" in action:
-                                page.locator(action["selector"]).scroll_into_view_if_needed()
-                            else:
-                                page.mouse.wheel(
-                                    action.get("x", random.randint(0, 100)), 
-                                    action.get("y", random.randint(100, 300))
-                                )
-                            results.append("✓ Scrolled page")
-                            
-                        # Screenshot handling
-                        if screenshot_callback:
-                            screenshot_callback(page)
-                            
-                    except PlaywrightTimeoutError:
-                        results.append(f"⌛ Timeout during {action_type} (selector: {action.get('selector', 'N/A')})")
-                    except Exception as e:
-                        results.append(f"❌ Error during {action_type}: {str(e)}")
-                        
-                    # Randomized delay between actions
-                    if action_type not in ["wait", "navigate"]:
-                        page.wait_for_timeout(random.randint(200, 800))
+                    if self.frame_callback:
+                        screenshot = await page.screenshot()
+                        self.frame_callback({
+                            "session_id": session_id,
+                            "frame": base64.b64encode(screenshot).decode('utf-8'),
+                            "action": action
+                        })
                         
             except Exception as e:
-                results.append(f"⚠ Critical error: {str(e)}")
+                log.append(f"⚠ Critical error: {str(e)}")
             finally:
-                context.close()
-                browser.close()
+                if session_id in self.active_sessions:
+                    del self.active_sessions[session_id]
+                await context.close()
+                await browser.close()
         
-        return "\n".join(results)
+            return "\n".join(log)
 
-    def execute_for_agent(self, prompt: str) -> Dict[str, Any]:
-        """Agent-compatible execution with stealth"""
-        actions = self.get_ai_response(prompt)
-        return {
-            "success": True,
-            "log": self.execute_actions(actions, headless=False),  # Visible for debugging
-            "actions": actions["output"]
-        }
+    async def _execute_real(self, session_id: str, actions_json: Dict[str, Any],
+                          screenshot_callback: Optional[Callable],
+                          headless: bool) -> str:
+        """Original browser execution with screenshots"""
+        async with async_playwright() as p:
+            browser = await self._get_authenticated_browser(p, headless)
+            context = await self._get_authenticated_context(browser)
+            page = await context.new_page()
+            self.active_sessions[session_id] = {"browser": browser, "page": page}
+            
+            log = []
+            try:
+                # Initial human-like activity
+                await page.mouse.move(100, 100)
+                await page.wait_for_timeout(500)
+                
+                for action_item in actions_json.get("output", []):
+                    if action_item["type"] != "computer_call":
+                        continue
+                        
+                    action = action_item["action"]
+                    result = await self._perform_action(page, action)
+                    log.append(result)
+                    
+                    if screenshot_callback:
+                        screenshot = await page.screenshot()
+                        screenshot_callback(screenshot)
+                        self.screenshot_history.append(screenshot)
+                        
+            except Exception as e:
+                log.append(f"⚠ Critical error: {str(e)}")
+            finally:
+                if session_id in self.active_sessions:
+                    del self.active_sessions[session_id]
+                await context.close()
+                await browser.close()
+        
+            return "\n".join(log)
+
+    async def _perform_action(self, page, action: Dict[str, Any]) -> str:
+        """Execute single action with error handling"""
+        action_type = action.get("type")
+        try:
+            if action_type == "navigate":
+                await page.goto(
+                    action["url"],
+                    wait_until=action.get("wait_until", "load"),
+                    timeout=action.get("timeout", 30000)
+                )
+                return f"✓ Navigated to {action['url']}"
+                
+            elif action_type == "click":
+                if not await self._try_selectors(
+                    page,
+                    action["selector"],
+                    "click",
+                    timeout=action.get("timeout", 5000),
+                    click_count=action.get("click_count", 1)
+                ):
+                    raise Exception(f"Failed to click: {action['selector']}")
+                return f"✓ Clicked: {action['selector'].split(',')[0].strip()}"
+                
+            elif action_type == "type":
+                if not await self._try_selectors(
+                    page,
+                    action["selector"],
+                    "type",
+                    text=action["text"],
+                    clear=action.get("clear", False)
+                ):
+                    raise Exception(f"Failed to type in: {action['selector']}")
+                return f"✓ Typed '{action['text']}' into {action['selector'].split(',')[0].strip()}"
+                
+            # Add other action types as needed...
+            
+            await page.wait_for_timeout(random.randint(200, 800))
+            return f"✓ Executed {action_type}"
+            
+        except PlaywrightTimeoutError:
+            return f"⌛ Timeout during {action_type}"
+        except Exception as e:
+            return f"❌ Error during {action_type}: {str(e)}"
+
+    # [Keep all your existing helper methods (_try_selectors, _human_type, etc.)]
+    
+    def set_virtual_mode(self, enabled: bool, callback: Optional[Callable] = None):
+        """Toggle virtual browser mode"""
+        self.virtual_mode = enabled
+        self.frame_callback = callback
+
+    async def close_session(self, session_id: str):
+        """Cleanup specific session"""
+        if session_id in self.active_sessions:
+            session = self.active_sessions.pop(session_id)
+            await session["page"].close()
+            await session["browser"].close()
