@@ -1,7 +1,7 @@
 import os
 import logging
 from typing import Optional
-from automation.core import BrowserAutomator
+from openthanos.automation.core02 import BrowserAutomator
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)

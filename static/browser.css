@@ -1,0 +1,56 @@
+.browser-container {
+    font-family: Arial, sans-serif;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.toolbar {
+    padding: 10px;
+    background: #f5f5f5;
+    display: flex;
+    gap: 10px;
+}
+
+#command-input {
+    flex-grow: 1;
+    padding: 8px;
+}
+
+.viewport {
+    border: 1px solid #ddd;
+    height: 600px;
+    overflow: auto;
+}
+
+#dom-container {
+    padding: 20px;
+}
+
+#url-display {
+    padding: 8px;
+    background: #f0f0f0;
+    font-family: monospace;
+}
+
+.automation-highlight {
+    outline: 2px solid red !important;
+}
+
+#action-log {
+    margin-top: 10px;
+    max-height: 200px;
+    overflow-y: auto;
+    border-top: 1px solid #eee;
+    padding: 10px;
+}
+
+.log-entry {
+    padding: 5px 0;
+    font-family: monospace;
+    font-size: 14px;
+}
+
+.action-type {
+    color: #0066cc;
+    font-weight: bold;
+}

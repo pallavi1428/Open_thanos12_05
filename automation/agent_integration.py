@@ -2,7 +2,7 @@ import os
 import base64
 from typing import List, Dict
 from openai.agents import tool
-from automation.core import BrowserAutomator
+from openthanos.automation.core02 import BrowserAutomator
 from automation.screenshot import ScreenshotManager
 
 class AutomationToolkit:
